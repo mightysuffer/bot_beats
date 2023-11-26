@@ -1,0 +1,14 @@
+[tool.poetry]
+name = "bot-beats"
+version = "0.1.0"
+description = ""
+authors = ["mightysuffer <43231032+mightysuffer@users.noreply.github.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
