@@ -4,31 +4,30 @@ import os
 from pytube import YouTube
 import subprocess
 import telebot
+import logging
+import concurrent.futures
+import requests
 from dotenv import load_dotenv
 
 load_dotenv()
 
+
+logging.basicConfig(level=logging.INFO, filename="bot_log.log", filemode="w",
+                    format="%(asctime)s %(levelname)s %(message)s")
 token = os.getenv("BOT_TOKEN")
 bot = telebot.TeleBot(token)  # Token
-folder = os.getenv("FOLDER_PATH")  # Path to save temp files
+folder = os.getenv("FOLDER_PATH")
 os.chdir(folder)
 FFMPEG_PATH = os.getenv("FFMPEG_PATH")
+workers = 3
+in_work = 0
 
 
 @bot.message_handler(content_types=['text'])
 def get_text_messages(message):
-    if message.text == "/start":
-        bot.send_message(message.from_user.id, "Отправь ссылку на YT бит")
-    else:
-        try:
-            beat_path = download_yt(link=message.text)
-            back = song_info(beat_path)
-            doc = open(folder + beat_path, 'rb')
-            bot.send_audio(message.from_user.id, doc, back)
-            doc.close()
-            os.remove(beat_path)
-        except Exception as ex:
-            bot.send_message(message.from_user.id, "Ошибка, попробуй заново")
+    if in_work > workers:
+        bot.reply_to(message, f"Много битов в обработке, придется подождать, перед вами: {in_work} запросов")
+    make_thread(message)
 
 
 def download_yt(link):
@@ -103,9 +102,9 @@ class TonalFragment(object):
                 self.altbestcorr = corr
 
     def get_key(self):
-        answer = "Likely key: " + max(self.key_dict, key=self.key_dict.get) + ", correlation: " + str(self.bestcorr)
+        answer = "Likely key: " + max(self.key_dict, key=self.key_dict.get)
         if self.altkey is not None:
-            answer += "  also possible: " + self.altkey + ", correlation: " + str(self.altbestcorr)
+            answer += "  also possible: " + self.altkey
         return answer
 
 
@@ -117,6 +116,58 @@ def song_info(beat_path):
     key = song.get_key()
     info = "BPM: " + str(tempo) + " \n" + key
     return info
+
+
+def process_audio(text):
+    beat_path = download_yt(text)
+    back = song_info(beat_path)
+    doc = open(folder + beat_path, 'rb')
+    return back, doc, beat_path
+
+
+def check_link(link):
+    try:
+        response = requests.get(link)
+        if response.status_code == 200:
+            return True
+        else:
+            return False
+    except Exception as ex:
+        logging.error(ex, exc_info=True)
+        return False
+
+
+def handle_message(text):
+    if text.text == "/start":
+        bot.send_message(text.from_user.id, "Отправь ссылку на YT бит")
+    else:
+        try:
+            if check_link(text.text):
+                bot.reply_to(text, "Бит в обработке")
+                logging.info(f"Request = \"{text.text}\"")
+                back, doc, beat_path = process_audio(text.text)
+                bot.send_audio(text.from_user.id, doc, back, reply_to_message_id=text.id)
+                doc.close()
+                os.remove(beat_path)
+            else:
+                bot.reply_to(text, "Нерабочая ссылка")
+        except Exception as ex:
+            logging.error(ex, exc_info=True)
+            bot.reply_to(text, "Ошибка, попробуй заново")
+
+
+def make_thread(message):
+    global in_work
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+            in_work += 1
+            executor.submit(handle_message, message)
+    except Exception as ex:
+        in_work -= 1
+        logging.error(ex, exc_info=True)
+        bot.send_message(message.from_user.id, "Непредвиденная ошибка, попробуй еще раз")
+    else:
+        in_work -= 1
 
 
 bot.polling(none_stop=True, interval=0)
