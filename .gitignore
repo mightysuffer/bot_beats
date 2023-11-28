@@ -4,3 +4,4 @@ test_asyncio.py
 bot_log.log
 .env
 .idea
+*.log
